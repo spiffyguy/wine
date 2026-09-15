@@ -1148,7 +1148,7 @@ static int get_poll_flags( struct sock *sock, int event )
     if (event & POLLHUP)
         flags |= AFD_POLL_HUP;
     if (event & POLLERR)
-        flags |= AFD_POLL_CONNECT_ERR;
+        flags |= (sock->state == SOCK_CONNECTING) ? AFD_POLL_CONNECT_ERR : AFD_POLL_HUP;
     if (sock->reset)
         flags |= AFD_POLL_RESET;
 
@@ -1448,6 +1448,15 @@ static void sock_poll_event( struct fd *fd, int event )
         if (sock->reset)
             event &= ~(POLLIN | POLLERR | POLLHUP);
 
+        /* On macOS/BSD, a cleanly-closed TCP connection may be reported as:
+         * - POLLERR with SO_ERROR=0 instead of POLLIN
+         * - POLLPRI|POLLHUP (triggered when poll() is called with POLLPRI on a
+         *   closed socket) instead of POLLIN|POLLHUP
+         * Convert to POLLIN so the MSG_PEEK below correctly identifies the EOF. */
+        if (sock->type == WS_SOCK_STREAM && !error &&
+            ((event & POLLERR) || ((event & POLLPRI) && (event & POLLHUP))))
+            event = (event & ~(POLLERR | POLLPRI)) | POLLIN;
+            
         if (sock->type == WS_SOCK_STREAM && (event & POLLIN))
         {
             char dummy;
