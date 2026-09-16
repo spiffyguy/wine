@@ -2488,6 +2488,15 @@ static NSString* WineLocalizedString(unsigned int stringID)
         [self updateFullscreenWindows];
         [self adjustWindowLevels:YES];
 
+        /* While another application was active, macOS installed that
+           application's cursor. Our cached idea of which cursor is set
+           (cursorIsCurrent / cursorHidden) is therefore stale, and a client
+           that hid the cursor would keep seeing the system arrow after
+           switching back. Forget the cached state and re-apply. */
+        cursorIsCurrent = FALSE;
+        cursorHidden = FALSE;
+        [self updateCursor:FALSE];
+
         if (beenActive)
             [self unminimizeWindowIfNoneVisible];
         beenActive = TRUE;
