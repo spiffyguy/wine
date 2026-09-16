@@ -47,6 +47,22 @@
 @end
 
 
+/* WINEMAC_FIXED_WINDOWS=1: give windows no resize/zoom affordance at all. The zoom
+   (green) button then does nothing and native macOS full screen is not offered
+   (see -adjustFullScreenBehavior:, which requires NSWindowStyleMaskResizable).
+   Intended for launchers that host a game in a Wine virtual desktop whose size must
+   not change behind the game's back. */
+static BOOL fixed_windows_requested(void)
+{
+    static int cached = -1;
+    if (cached < 0)
+    {
+        const char* env = getenv("WINEMAC_FIXED_WINDOWS");
+        cached = (env && *env && *env != '0');
+    }
+    return cached;
+}
+
 static NSUInteger style_mask_for_features(const struct macdrv_window_features* wf)
 {
     NSUInteger style_mask;
@@ -56,7 +72,8 @@ static NSUInteger style_mask_for_features(const struct macdrv_window_features* w
         style_mask = NSWindowStyleMaskTitled;
         if (wf->close_button) style_mask |= NSWindowStyleMaskClosable;
         if (wf->minimize_button) style_mask |= NSWindowStyleMaskMiniaturizable;
-        if (wf->resizable || wf->maximize_button) style_mask |= NSWindowStyleMaskResizable;
+        if ((wf->resizable || wf->maximize_button) && !fixed_windows_requested())
+            style_mask |= NSWindowStyleMaskResizable;
         if (wf->utility) style_mask |= NSWindowStyleMaskUtilityWindow;
     }
     else style_mask = NSWindowStyleMaskBorderless;
