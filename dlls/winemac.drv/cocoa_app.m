@@ -1430,6 +1430,58 @@ static NSString* WineLocalizedString(unsigned int stringID)
             pressedKeyCodes[index] &= ~mask;
     }
 
+    /* Post a synthetic release for every key we have reported as pressed. macOS stops
+       delivering key events the moment the app deactivates, so a key that was down at
+       that point (Tab during Cmd-Tab is the common one) never gets its key-up and stays
+       stuck down in the Windows app.
+
+       The release must be attributed to the window that owns the keyboard focus and go
+       to that window's queue only — the same path real key events take. A nil-window
+       broadcast leaves the driver's per-window key state inconsistent, which breaks
+       later translation of keys that produce characters (Backspace stops erasing). */
+    - (void) releaseAllPressedKeys
+    {
+        int bits = sizeof(pressedKeyCodes[0]) * 8;
+        int count = (int)(sizeof(pressedKeyCodes) / sizeof(pressedKeyCodes[0]));
+        WineWindow* window = (WineWindow*)[NSApp keyWindow];
+        int index, bit;
+
+        if (![window isKindOfClass:[WineWindow class]])
+            window = [keyWindows count] ? [keyWindows objectAtIndex:0] : nil;
+        if (![window isKindOfClass:[WineWindow class]])
+            window = [self frontWineWindow];
+        if (!window)
+        {
+            /* No window to attribute the release to: just forget the keys so the next
+               press/release pair starts from a consistent state. */
+            for (index = 0; index < count; index++)
+                pressedKeyCodes[index] = 0;
+            return;
+        }
+
+        for (index = 0; index < count; index++)
+        {
+            uint32_t word = pressedKeyCodes[index];
+
+            for (bit = 0; bit < bits; bit++)
+            {
+                macdrv_event* event;
+
+                if (!(word & (1u << bit))) continue;
+
+                event = macdrv_create_event(KEY_RELEASE, window);
+                event->key.keycode   = (uint16_t)(index * bits + bit);
+                event->key.modifiers = 0;
+                event->key.time_ms   = [self ticksForEventTime:[[NSProcessInfo processInfo] systemUptime]];
+
+                [window.queue postEvent:event];
+                macdrv_release_event(event);
+            }
+
+            pressedKeyCodes[index] = 0;
+        }
+    }
+
     - (void) window:(WineWindow*)window isBeingDragged:(BOOL)dragged
     {
         if (dragged)
@@ -2582,6 +2634,10 @@ static NSString* WineLocalizedString(unsigned int stringID)
         WineEventQueue* queue;
 
         [self invalidateGotFocusEvents];
+
+        /* Flush keys that were down when focus was lost, so they do not stay stuck in
+           the Windows app (e.g. Tab held during Cmd-Tab). */
+        [self releaseAllPressedKeys];
 
         if (!temporarilyIgnoreResignEventsForDialog)
         {
