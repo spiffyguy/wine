@@ -1430,47 +1430,6 @@ static NSString* WineLocalizedString(unsigned int stringID)
             pressedKeyCodes[index] &= ~mask;
     }
 
-    /* Post a synthetic release for every key we have reported as pressed. macOS
-       stops delivering key events the moment the app deactivates, so a key that
-       was down at that point (Tab during Cmd-Tab is the common one) never gets
-       its key-up and stays stuck down in the Windows app. */
-    - (void) releaseAllPressedKeys
-    {
-        int bits = sizeof(pressedKeyCodes[0]) * 8;
-        int count = sizeof(pressedKeyCodes) / sizeof(pressedKeyCodes[0]);
-        WineEventQueue* queue;
-        int index, bit;
-
-        for (index = 0; index < count; index++)
-        {
-            uint32_t word = pressedKeyCodes[index];
-            if (!word) continue;
-
-            for (bit = 0; bit < bits; bit++)
-            {
-                macdrv_event* event;
-                uint16_t keyCode;
-
-                if (!(word & (1 << bit))) continue;
-                keyCode = index * bits + bit;
-
-                event = macdrv_create_event(KEY_RELEASE, nil);
-                event->key.keycode   = keyCode;
-                event->key.modifiers = 0;
-                event->key.time_ms   = [self ticksForEventTime:[[NSProcessInfo processInfo] systemUptime]];
-
-                [eventQueuesLock lock];
-                for (queue in eventQueues)
-                    [queue postEvent:event];
-                [eventQueuesLock unlock];
-
-                macdrv_release_event(event);
-            }
-
-            pressedKeyCodes[index] = 0;
-        }
-    }
-
     - (void) window:(WineWindow*)window isBeingDragged:(BOOL)dragged
     {
         if (dragged)
@@ -2623,10 +2582,6 @@ static NSString* WineLocalizedString(unsigned int stringID)
         WineEventQueue* queue;
 
         [self invalidateGotFocusEvents];
-
-        /* Flush keys that were down when focus was lost, so they do not stay
-           stuck in the Windows app (e.g. Tab held during Cmd-Tab). */
-        [self releaseAllPressedKeys];
 
         if (!temporarilyIgnoreResignEventsForDialog)
         {
